@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
-from misc import *
+from utils.misc import get_attr
 
 
 class TradingEnv(gym.Env):
@@ -90,8 +90,8 @@ class TradingEnv(gym.Env):
             self.position,
             self.position_value,
             self.portfolio_value,
-            self.leverage,
-            self.portfolio_volatility,
+            # self.leverage,
+            # self.portfolio_volatility,
         ])
 
 
@@ -115,9 +115,8 @@ class TradingEnv(gym.Env):
         if self.current_step >= len(self.input_df) - 2:
             self.end = True
         if not self.end:
-            self.__take_action(action)
+            reward = self.__take_action(action)
             obs = self.__next_observation()
-            reward = action[0] * ((self.price[self.current_step] - self.price[self.current_step - 1]))
             return obs, reward, self.end, {}
         else:
             # termination
@@ -127,20 +126,21 @@ class TradingEnv(gym.Env):
             # plt.plot(self.records['portfolio_volatility'])
             # plt.show()
             obs = self.__next_observation()
-            reward = action[0] * (self.price[self.current_step] - self.price[self.current_step - 1])
+            reward = 0
             return obs, reward, self.end, {}
 
         
     def __take_action(self, action):
 
         action[0] -= 4
-        action[1] -= 12
+        action[1] -= 4
 
-        # assert -4 <= action[0] <= 4 
-        # assert -4 <= action[1] <= 4
+        assert -4 <= action[0] <= 4 
+        assert -4 <= action[1] <= 4
 
         order_price = 0
         execution_price = 0
+        order_quantity = 0
         if action[1] != 0:
             # execute order
             order_price = self.curr_price * (1 + (action[0] / 4) * self.curr_volatility)
@@ -157,6 +157,7 @@ class TradingEnv(gym.Env):
             self.cash -= execution_price * order_quantity
             self.position += order_quantity
         
+        
         self.position_value = self.position * self.price[self.current_step]
         self.portfolio_value = self.cash + self.position_value
         self.leverage = self.position_value / self.portfolio_value
@@ -171,8 +172,8 @@ class TradingEnv(gym.Env):
             self.position,
             self.position_value,
             self.portfolio_value,
-            self.leverage,
-            self.portfolio_volatility,
+            # self.leverage,
+            # self.portfolio_volatility,
         ])
 
         self.records['cash'].append(self.cash)
@@ -186,8 +187,14 @@ class TradingEnv(gym.Env):
         self.trade_record['order_price'].append(order_price)
         self.trade_record['order_quantity'].append(order_price)
         self.trade_record['execution_price'].append(execution_price)
-
+        
+        reward = order_quantity * ((self.price[self.current_step] - self.price[self.current_step - 1]))
+        
         self.current_step += 1
+
+        return reward
+
+        
         
 
     def render(self, mode='human', close=False):
