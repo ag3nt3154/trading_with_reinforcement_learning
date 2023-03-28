@@ -13,8 +13,20 @@ class TradingEnv(gym.Env):
     def __init__(self, df, input_feature_list, **kwargs):
         super(TradingEnv, self).__init__()
         
+        # Define intital capital
         self.initial_capital = get_attr(kwargs, 'initial_capital', 1000000)
         
+        # Define state and action space
+        self.state_size = get_attr(kwargs, 'state_size', 16)
+        self.action_size = get_attr(kwargs, 'action_size', 9)
+
+        # lookback for time-series data for input
+        self.lookback_period = get_attr(kwargs, 'lookback_period', 20)
+        # lookforward for hindsight bias on the reward
+        self.lookforward_period = get_attr(kwargs, 'lookforward_period', 20)
+
+        self.render_window_size = get_attr(kwargs, 'render_window_size', 20)
+
         self.df = df.copy()
         self.input_feature_list = input_feature_list
         assert 'volatility' in input_feature_list
@@ -25,27 +37,19 @@ class TradingEnv(gym.Env):
 
         self.clean_slate()
 
-        # lookback for time-series data for input
-        self.lookback_period = get_attr(kwargs, 'lookback_period', 20)
-        # lookforward for hindsight bias on the reward
-        self.lookforward_period = get_attr(kwargs, 'lookforward_period', 20)
-
-        self.render_window_size = get_attr(kwargs, 'render_window_size', 20)
-
         # action_space = limit_order = [order_price, order_quantity]
         self.action_space = spaces.Box(
-            low=np.array([-4, -4]),
-            high=np.array([4, 4]),
+            low=np.array([0, 0]),
+            high=np.array([self.action_size, self.action_size]),
             dtype=np.float32
         )
 
         self.observation_space = spaces.Box(
-            low=np.array([-1000000 for f in range(len(self.input_feature_list) + len(self.trader_state))]),
-            high=np.array([1000000 for f in range(len(self.input_feature_list) + len(self.trader_state))]),
+            low=np.array([-np.inf for f in range(self.state_size)]),
+            high=np.array([np.inf for f in range(self.state_size)]),
             dtype=np.float64
         )
 
-        
         # execution mechanism
         self.price = self.df['adjclose'].to_numpy()
         
