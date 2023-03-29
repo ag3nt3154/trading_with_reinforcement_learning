@@ -24,17 +24,23 @@ class TradingEnv(gym.Env):
         self.lookback_period = get_attr(kwargs, 'lookback_period', 20)
         # lookforward for hindsight bias on the reward
         self.lookforward_period = get_attr(kwargs, 'lookforward_period', 20)
-
+        # render_window_size for visualising trades
         self.render_window_size = get_attr(kwargs, 'render_window_size', 20)
 
+        # set dataframe
         self.df = df.copy()
+        # set input_feature_list -> all the signals to be input into the model
         self.input_feature_list = input_feature_list
+        # check that volatility is present as it is required to generate the order price
         assert 'volatility' in input_feature_list
+        # check that all input features are present in the dataframe
         for f in self.input_feature_list:
             if f not in list(self.df):
                 raise Exception('Input feature ' + f + 'not found in dataframe')
+        # convert to numpy array to speed up execution
         self.input_df = self.df[input_feature_list].to_numpy()
 
+        # create default state of the environment
         self.clean_slate()
 
         # action_space = limit_order = [order_price, order_quantity]
@@ -43,36 +49,41 @@ class TradingEnv(gym.Env):
             high=np.array([self.action_size, self.action_size]),
             dtype=np.float32
         )
-
+        # observation_space = [input_features, trader_state]
         self.observation_space = spaces.Box(
             low=np.array([-np.inf for f in range(self.state_size)]),
             high=np.array([np.inf for f in range(self.state_size)]),
             dtype=np.float64
         )
 
-        # execution mechanism
-        self.price = self.df['adjclose'].to_numpy()
+        # valuation price -> price used to mark the portfolio to market and calculate returns
+        self.eval_price = self.df['close'].to_numpy()
+
+        # convert OHLC prices to numpy array
+        self.open_price = self.df['open'].to_numpy()
+        self.close_price = self.df['close'].to_numpy()
+        self.high_price = self.df['high'].to_numpy()
+        self.low_price = self.df['low'].to_numpy()
         
 
-        
     def clean_slate(self):
         '''
-        Set initial state of environment.
-        Called by self.__init__ and self.reset
+        Set initial default state of environment.
+        Called by __init__ and reset
         '''
         # State variables
         self.cash = self.initial_capital
         self.position = 0
         self.position_value = 0
         self.portfolio_value = self.cash + self.position_value
-        self.leverage = self.position_value / self.portfolio_value
+        self.leverage = abs(self.position_value / self.portfolio_value)
         self.portfolio_volatility = 0
         self.portfolio_return = 1
         self.end = False
         self.current_step = 0
 
-        # Records
-        self.records = {
+        # record all instantaneous values of state
+        self.record = {
             'cash': [],
             'position': [],
             'position_value': [],
@@ -82,13 +93,16 @@ class TradingEnv(gym.Env):
             'portfolio_return': [],
         }
 
+        # record all trades
         self.trade_record = {
-            'order_quantity': [],
             'order_price': [],
+            'order_quantity': [],
             'execution_price': [],
-            'cost_basis': [],
+            'execution_quantity': [],
+            # 'cost_basis': [],
         }
 
+        # instantaneous state of the trader
         self.trader_state = np.array([
             self.cash,
             self.position,
@@ -100,75 +114,155 @@ class TradingEnv(gym.Env):
 
 
     def reset(self):
+        '''
+        Reset env to the clean default state and return state observation
+        '''
         self.clean_slate()
         return self.__next_observation()
     
 
     def __next_observation(self):
         '''
-        return input arr and trader_state in 1 vector
+        return state/observation
         '''
         obs = np.concatenate([self.input_df[self.current_step], self.trader_state])
+
+        # update current volatility
         self.curr_volatility = self.df['volatility'].to_numpy()[self.current_step]
+        # update current price
         self.curr_price = self.df['close'].to_numpy()[self.current_step]
         return obs
     
 
     def step(self, action):
+        '''
+        env takes 1 step given action input
+        '''
         # define terminate condition
         if self.current_step >= len(self.input_df) - 2:
             self.end = True
+
+        # if not terminated -> take step as described by action input
         if not self.end:
             reward = self.__take_action(action)
             obs = self.__next_observation()
             return obs, reward, self.end, {}
+        
+        # termination
         else:
-            # termination
-            # plt.plot(np.array(self.records['portfolio_value']) / 1e6 * 400)
-            # plt.plot(self.price)
-            # plt.show()
-            # plt.plot(self.records['portfolio_volatility'])
-            # plt.show()
+            self.render()
             obs = self.__next_observation()
             reward = 0
             return obs, reward, self.end, {}
 
         
     def __take_action(self, action):
+        '''
+        Do stuff as prescribed by action input
+        '''
+        # check that action input is within the action_size and is an odd number
+        
 
-        action[0] -= 4
-        action[1] -= 4
+        # action input value limit
+        act_lim = (self.action_size - 1) // 2
 
-        assert -4 <= action[0] <= 4 
-        assert -4 <= action[1] <= 4
+        # centre action input value about 0
+        action[0] -= act_lim
+        action[1] -= act_lim
 
+        assert -act_lim <= action[0] <= act_lim
+        assert -act_lim <= action[1] <= act_lim
+
+        # preset order_price, order_quantity, execution_price
+        # execution_price may differ from the order_price based on the next period's market prices
         order_price = 0
-        execution_price = 0
         order_quantity = 0
+        execution_price = 0
+        execution_quantity = 0
+        
+        # if order_quantity is not 0 -> we are buying or selling
         if action[1] != 0:
-            # execute order
-            order_price = self.curr_price * (1 + (action[0] / 4) * self.curr_volatility)
-            max_long_position = self.portfolio_value // order_price
-            max_short_position = -self.portfolio_value // order_price
+            # action[0] defines the deviation of order price from current price in terms of std dev
+            # order_price = current price + action[0] * std_dev
+            order_price = self.curr_price * (1 + (action[0] / act_lim) * self.curr_volatility)
+
+
+            # action[1] defines the order relative to the max long position and max short position
+            # max positions can be defined by leverage later
+
+            # max long position -> buy asset with portfolio value
+            max_long_position = self.portfolio_value // self.curr_price
+            # max long order -> order quantity require to achieve max long position from current position
             max_long_order_quantity = max_long_position - self.position
+
+            # max short position -> short assets to with portfolio value as collateral
+            max_short_position = -self.portfolio_value // self.curr_price
+            # max short order -> order quantity required to achieve max short position from current position
             max_short_order_quantity = max_short_position - self.position
-            if action[1] > 0:
-                order_quantity = (action[1] / 4) * max_long_order_quantity
-            else:
-                order_quantity = -(action[1] / 4) * max_short_order_quantity
             
-            execution_price = np.max([self.price[self.current_step + 1], order_price])
-            self.cash -= execution_price * order_quantity
-            self.position += order_quantity
+            # define order quantity relative to max long order and max short order
+            if action[1] > 0:
+                order_quantity = (action[1] / act_lim) * max_long_order_quantity
+                
+            else:
+                order_quantity = -(action[1] / act_lim) * max_short_order_quantity
+                
+            # determine execution price assuming that order is a limit order placed 
+            # before open for next time period, e.g. place limit order during after-market
+
+            # if buying
+            if order_quantity > 0:
+
+                # if open < order price, we will get filled at open
+                if self.open_price[self.current_step + 1] < order_price:
+                    execution_price = self.open_price[self.current_step + 1]
+                    execution_quantity = order_quantity
+
+                # if low <= order price, we will get filled at order price
+                elif self.low_price[self.current_step + 1] <= order_price:
+                    execution_price = order_price
+                    execution_quantity = order_quantity
+
+                # if low > order price, we will not get filled
+                else:
+                    # execution price and quantity remains 0
+                    pass
+            
+            # if selling
+            if order_quantity < 0:
+                
+                # if open > order price, we will get filled at open
+                if self.open_price[self.current_step + 1] > order_price:
+                    execution_price = self.open_price[self.current_step + 1]
+                    execution_quantity = order_quantity
+                
+                # if high >= order price, we will get filled at order price
+                elif self.high_price[self.current_step + 1] >= order_price:
+                    execution_price = order_price
+                    execution_quantity = order_quantity
+                
+                # if high < order price, we will not get filled
+                else:
+                    # execution price and quantity remains 0
+                    pass
+            
+            # # market order at close
+            # execution_quantity = order_quantity
+            # execution_price = self.close_price[self.current_step]
+
+            if execution_quantity != 0:
+                # change cash and position from order execution
+                self.cash -= execution_price * execution_quantity
+                self.position += execution_quantity
         
-        
-        self.position_value = self.position * self.price[self.current_step]
+        # calculate new trader state
+        self.position_value = self.position * self.eval_price[self.current_step]
         self.portfolio_value = self.cash + self.position_value
-        self.leverage = self.position_value / self.portfolio_value
+        self.leverage = abs(self.position_value / self.portfolio_value)
         self.portfolio_return = self.portfolio_value / self.initial_capital
         self.portfolio_volatility = np.std(
-            self.records['portfolio_return'][-self.lookback_period:]
-            # self.records['portfolio_return']
+            self.record['portfolio_return'][-self.lookback_period:]
+            # self.record['portfolio_return']
             )
 
         self.trader_state = np.array([
@@ -180,25 +274,26 @@ class TradingEnv(gym.Env):
             # self.portfolio_volatility,
         ])
 
-        self.records['cash'].append(self.cash)
-        self.records['position'].append(self.position)
-        self.records['position_value'].append(self.position_value)
-        self.records['portfolio_value'].append(self.portfolio_value)
-        self.records['leverage'].append(self.leverage)
-        self.records['portfolio_volatility'].append(self.portfolio_volatility)
-        self.records['portfolio_return'].append(self.portfolio_return)
+        # record
+        self.record['cash'].append(self.cash)
+        self.record['position'].append(self.position)
+        self.record['position_value'].append(self.position_value)
+        self.record['portfolio_value'].append(self.portfolio_value)
+        self.record['leverage'].append(self.leverage)
+        self.record['portfolio_volatility'].append(self.portfolio_volatility)
+        self.record['portfolio_return'].append(self.portfolio_return)
         
         self.trade_record['order_price'].append(order_price)
         self.trade_record['order_quantity'].append(order_price)
         self.trade_record['execution_price'].append(execution_price)
+        self.trade_record['execution_quantity'].append(execution_quantity)
         
-        reward = order_quantity * ((self.price[self.current_step] - self.price[self.current_step - 1]))
+        reward = self.position * ((self.eval_price[self.current_step] - self.eval_price[self.current_step - 1]))
         
         self.current_step += 1
 
         return reward
 
-        
         
 
     def render(self, mode='human', close=False):
