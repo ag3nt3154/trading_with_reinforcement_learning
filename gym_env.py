@@ -10,15 +10,22 @@ from utils.misc import get_attr
 class TradingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df, input_feature_list, **kwargs):
+    def __init__(self, df, **kwargs):
         super(TradingEnv, self).__init__()
         
         # Define intital capital
         self.initial_capital = get_attr(kwargs, 'initial_capital', 1000000)
+
+        # define input_feature_list
+        # set input_feature_list -> all the signals to be input into the model
+        self.input_feature_list = get_attr(kwargs, 'input_feature_list', None)
         
         # Define state and action space
         self.state_size = get_attr(kwargs, 'state_size', 16)
         self.action_size = get_attr(kwargs, 'action_size', 9)
+
+        # hindsight weight
+        self.hindsight_weight = get_attr(kwargs, 'hindsight_weight', 0.5)
 
         # lookback for time-series data for input
         self.lookback_period = get_attr(kwargs, 'lookback_period', 20)
@@ -26,19 +33,19 @@ class TradingEnv(gym.Env):
         self.lookforward_period = get_attr(kwargs, 'lookforward_period', 20)
         # render_window_size for visualising trades
         self.render_window_size = get_attr(kwargs, 'render_window_size', 20)
+        # check render
+        self.display = get_attr(kwargs, 'display', False)
 
         # set dataframe
         self.df = df.copy()
-        # set input_feature_list -> all the signals to be input into the model
-        self.input_feature_list = input_feature_list
         # check that volatility is present as it is required to generate the order price
-        assert 'volatility' in input_feature_list
+        assert 'volatility' in self.input_feature_list
         # check that all input features are present in the dataframe
         for f in self.input_feature_list:
             if f not in list(self.df):
                 raise Exception('Input feature ' + f + 'not found in dataframe')
         # convert to numpy array to speed up execution
-        self.input_df = self.df[input_feature_list].to_numpy()
+        self.input_df = self.df[self.input_feature_list].to_numpy()
 
         # create default state of the environment
         self.clean_slate()
@@ -150,7 +157,7 @@ class TradingEnv(gym.Env):
         
         # termination
         else:
-            self.render()
+            self.eval_render()
             obs = self.__next_observation()
             reward = 0
             return obs, reward, self.end, {}
@@ -263,7 +270,9 @@ class TradingEnv(gym.Env):
         self.portfolio_volatility = np.std(
             self.record['portfolio_return'][-self.lookback_period:]
             # self.record['portfolio_return']
-            )
+        )
+        if self.portfolio_volatility == np.nan:
+            self.portfolio_volatility = 0
 
         self.trader_state = np.array([
             self.cash,
@@ -288,7 +297,10 @@ class TradingEnv(gym.Env):
         self.trade_record['execution_price'].append(execution_price)
         self.trade_record['execution_quantity'].append(execution_quantity)
         
-        reward = self.position * ((self.eval_price[self.current_step] - self.eval_price[self.current_step - 1]))
+        reward = self.position * (
+            (self.eval_price[self.current_step] - self.eval_price[self.current_step - 1]) 
+            + self.hindsight_weight * (self.eval_price[self.current_step + 1] - self.eval_price[self.current_step - 1])
+            )
         
         self.current_step += 1
 
@@ -296,5 +308,29 @@ class TradingEnv(gym.Env):
 
         
 
-    def render(self, mode='human', close=False):
-        pass
+    def eval_render(self, mode='human', close=False):
+        '''
+        evaluate and render peformance indices
+        '''
+        self.total_return = self.record['portfolio_return'][-1] - 1
+        self.volatility = np.std(np.array(self.record['portfolio_return']) - 1) * np.sqrt(len(self.record['portfolio_return']))
+        self.sharpe = self.total_return / self.volatility
+        curr_max_return = 1
+        self.max_drawdown = 0
+        for i in range(len(self.record['portfolio_return'])):
+            if self.record['portfolio_return'][i] > curr_max_return:
+                curr_max_return = self.record['portfolio_return'][i]
+            else:
+                drawdown = (curr_max_return - self.record['portfolio_return'][i]) / curr_max_return
+                if drawdown > self.max_drawdown:
+                    self.max_drawdown = drawdown
+        self.calmar = self.total_return / self.max_drawdown
+
+        if self.display:
+            print(f'total return: {self.total_return}')
+            print(f'volatility  : {self.volatility}')
+            print(f'sharpe ratio: {self.sharpe}')
+            print(f'max drawdown: {self.max_drawdown}')
+            print(f'calmar ratio: {self.calmar}')
+        
+        

@@ -52,11 +52,20 @@ class DQNagent(object):
         # Define gamme
         self.gamma = get_attr(kwargs, 'gamma', 0.99)
 
+        self.new_model = get_attr(kwargs, 'new_model', True)
+        self.save_model_path = get_attr(kwargs, 'save_mode_path', 'dqn.pth')
+        self.load_model_path = get_attr(kwargs, 'load_model_path', 'dqn.pth')
+
+
         # Define policy network
         self.dqn = DQN(self.state_size, self.action_size)
         # Define target network
         self.target_dqn = DQN(self.state_size, self.action_size)
-
+        
+        if not self.new_model:
+            # load model weights
+            self.dqn.load_state_dict(torch.load(self.load_model_path))
+        
         # Copy the weights from the policy network to the target network
         self.update_target_network()
 
@@ -68,13 +77,12 @@ class DQNagent(object):
         self.dqn.to(self.device)
         
         
-        
-    def select_action(self, state):
+    def select_action(self, state, explore=True):
         # Decay the exploration parameter
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
         # Choose a random action with probability epsilon
-        if np.random.rand() < self.epsilon:
+        if np.random.rand() < self.epsilon and explore:
             price_action = np.random.randint(self.single_action_size)
             quantity_action = np.random.randint(self.single_action_size)
 
@@ -95,6 +103,7 @@ class DQNagent(object):
 
         return price_action, quantity_action
     
+
     def learn(self, optimizer):
         # Sample a batch of experiences from the replay memory
         experiences = self.memory.sample(self.batch_size)
@@ -131,6 +140,12 @@ class DQNagent(object):
         loss.backward()
         optimizer.step()
 
+
     def update_target_network(self):
         # Copy the weights from the DQN network to the target network
         self.target_dqn.load_state_dict(self.dqn.state_dict())   
+
+    
+    def save_model(self):
+        # save model
+        torch.save(self.dqn.state_dict(), self.save_model_path)
