@@ -93,14 +93,10 @@ class DQNagent(object):
                 # Compute the Q-values for the state
                 q_values = self.dqn(state)
                 
-                # Split the Q-values into two halves  
-                q1, q2 = q_values.split(self.single_action_size, dim=1)
-
                 # Compute the index of the action with the highest Q-value for each half
-                price_action = q1.argmax().item()
-                quantity_action = q2.argmax().item()
+                action = q_values.argmax().item()
 
-        return price_action, quantity_action
+        return action
     
 
     def learn(self, optimizer):
