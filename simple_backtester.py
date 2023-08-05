@@ -55,7 +55,7 @@ class backTester:
         Set the asset df to the backtester
         Change df columns to numpy arrays for faster computation
         '''
-        self.df = df.copy()['open', 'high', 'low', 'close', 'adjclose']
+        self.df = df.copy()
 
         self.open = self.df['open'].to_numpy()
         # self.high = self.df['high'].to_numpy()
@@ -106,7 +106,7 @@ class backTester:
 
         self.current_step += 1
 
-        if self.current_step == len(self.df):
+        if self.current_step == len(self.df) - 1:
             self.end = True
 
 

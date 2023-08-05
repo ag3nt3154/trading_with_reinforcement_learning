@@ -1,5 +1,5 @@
-from gym_env import TradingEnv
-from agent import DQNagent
+from new_env import TradingEnv
+from new_agent import DQNagent
 from utils.misc import *
 import torch.optim as optim
 from tqdm.notebook import tqdm
@@ -32,14 +32,14 @@ class Trainer(object):
         for episode in tqdm(range(self.num_episodes)):
             while not done:
                 # Select an action using the DQN agent
-                action1, action2 = self.agent.select_action(state)
+                action = self.agent.select_action(state)
 
                 # Take the action in the environment
-                next_state, reward, done, info = self.env.step([action1, action2])
+                next_state, reward, done, info = self.env.step(action)
                 # if reward == 0: print(next_state, reward, done, info)
 
                 # Add the experience to the replay memory
-                self.agent.memory.push(state, [action1, action2], next_state, reward, done)
+                self.agent.memory.push(state, action, next_state, reward, done)
 
                 # Move to the next state
                 state = next_state
@@ -51,15 +51,15 @@ class Trainer(object):
             if episode % self.target_update_threshold == 0:
                 self.agent.update_target_network()
 
-            self.record_list.append(self.env.record)
-            self.trade_record_list.append(self.env.trade_record)
+            self.record_list.append(self.env.bt.record)
+            # self.trade_record_list.append(self.env.trade_record)
 
             state = self.env.reset()
             done = False
         
         self.agent.save_model()
         
-        return self.record_list, self.trade_record_list
+        return self.record_list
     
     def test(self, df):
         self.env = TradingEnv(df = df, **self.params)
@@ -67,14 +67,14 @@ class Trainer(object):
         done = False
         while not done:
             # Select an action using the DQN agent
-            action1, action2 = self.agent.select_action(state, explore=False)
+            action = self.agent.select_action(state, explore=False)
 
             # Take the action in the environment
-            next_state, reward, done, info = self.env.step([action1, action2])
+            next_state, reward, done, info = self.env.step(action)
             # if reward == 0: print(next_state, reward, done, info)
 
             # Add the experience to the replay memory
-            self.agent.memory.push(state, [action1, action2], next_state, reward, done)
+            self.agent.memory.push(state, action, next_state, reward, done)
 
             # Move to the next state
             state = next_state

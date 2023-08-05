@@ -82,9 +82,8 @@ class DQNagent(object):
 
         # Choose a random action with probability epsilon
         if np.random.rand() < self.epsilon and explore:
-            price_action = np.random.randint(self.single_action_size)
-            quantity_action = np.random.randint(self.single_action_size)
-
+            action = np.random.randint(self.action_size)
+            
         else:
             with torch.no_grad():
                 # Convert the state to a PyTorch tensor
@@ -105,25 +104,31 @@ class DQNagent(object):
 
         batch = Transition(*zip(*experiences))
         states = torch.tensor(np.array(batch.state), dtype=torch.float32)
-        actions = torch.tensor(np.array(batch.action), dtype=torch.int64)
+        actions = torch.tensor(np.array(batch.action), dtype=torch.int64).unsqueeze(1)
         next_states = torch.tensor(np.array(batch.next_state), dtype=torch.float32)
         rewards = torch.tensor(np.array(batch.reward), dtype=torch.float32)
         dones = torch.tensor(np.array(batch.dones), dtype=torch.float32)
         
 
         # Compute the Q-values for the current state-action pairs using the DQN network
-        current_q_values = self.dqn(states).gather(1, actions).squeeze(1)
+        current_q_values = self.dqn(states).gather(1, actions)
+        # print(f'current_q_values: {current_q_values.shape}')
         target_actions = self.target_dqn(next_states)
+        # print(f'target_actions: {target_actions.shape}')
 
         # Reshape to have shape (batch_size, 2, single_action_size)
-        target_actions_reshaped = target_actions.view(self.batch_size, 2, self.single_action_size)
+        # target_actions_reshaped = target_actions.view(self.batch_size, 2, self.single_action_size)
 
         # Take the maximum value along the last dimension (which has size 9)
-        next_q_values, _ = target_actions_reshaped.max(dim=-1)
+        # next_q_values, _ = target_actions_reshaped.max(dim=-1)
+        next_q_values, _ = target_actions.max(dim=-1)
+        # print(f'next_q_values: {next_q_values.shape}')
         
         # Compute the Q-values for the next states using the target network
         rewards = rewards.unsqueeze(1)
-        rewards = torch.cat((rewards, rewards), dim=1)
+        # print(f'rewards {rewards.shape}')
+
+        # rewards = torch.cat((rewards, rewards), dim=1)
         # Compute the expected Q-values using the Bellman equation
         expected_q_values = rewards + self.gamma * next_q_values
         

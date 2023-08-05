@@ -21,6 +21,7 @@ class TradingEnv(gym.Env):
         # define input_feature_list
         # set input_feature_list -> all the signals to be input into the model
         self.input_feature_list = get_attr(kwargs, 'input_feature_list', None)
+        print(self.input_feature_list)
         # trader_state_list -> state of trader, e.g. cash, position, leverage
         self.trader_state_list = get_attr(kwargs, 'trader_state_list', None)
         
@@ -63,18 +64,19 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Box(
             low=np.array([0]),
             high=np.array([self.action_size]),
-            dtype=np.float64
+            dtype=np.float32
         )
         # observation_space = [input_features, trader_state]
         self.observation_space = spaces.Box(
             low=np.array([-np.inf for f in range(self.state_size)]),
             high=np.array([np.inf for f in range(self.state_size)]),
-            dtype=np.float64
+            dtype=np.float32
         )
 
         # initialize backtester and set df
-        self.bt = backTester(kwargs)
+        self.bt = backTester(**kwargs)
         self.bt.set_asset(self.df)
+        self.trader_state = self.bt.trader_state
 
         # create default state of the environment
         self.clean_slate()
@@ -87,6 +89,8 @@ class TradingEnv(gym.Env):
         '''
         self.bt.clean_slate()
         self.end = False
+        self.current_step = 0
+        
 
         
     def reset(self):
@@ -115,7 +119,7 @@ class TradingEnv(gym.Env):
         env takes 1 step given action input
         '''
         # define terminate condition
-        if self.current_step >= len(self.input_df) - 2:
+        if self.bt.end:
             self.end = True
 
         # if not terminated -> take step as described by action input
@@ -126,6 +130,7 @@ class TradingEnv(gym.Env):
         
         # termination
         else:
+            # self.bt.analyse()
             self.eval_render()
             obs = self.__next_observation()
             reward = 0
@@ -137,8 +142,11 @@ class TradingEnv(gym.Env):
         Do stuff as prescribed by action input
         '''
         
+        
+
         # centre action input value about 0
         action -= self.act_lim
+        order_quantity = 0
 
         if action != 0:
 
@@ -146,14 +154,14 @@ class TradingEnv(gym.Env):
             assert -self.act_lim <= action <= self.act_lim     
 
             # max long position -> buy asset with portfolio value
-            max_long_position = self.portfolio_value // self.bt.open[self.current_step]
+            max_long_position = self.bt.portfolio_value // self.bt.open[self.current_step]
             # max long order -> order quantity require to achieve max long position from current position
-            max_long_order_quantity = max_long_position - self.position
+            max_long_order_quantity = max_long_position - self.bt.position
 
             # max short position -> short assets to with portfolio value as collateral
-            max_short_position = -self.portfolio_value // self.bt.open[self.current_step]
+            max_short_position = -self.bt.portfolio_value // self.bt.open[self.current_step]
             # max short order -> order quantity required to achieve max short position from current position
-            max_short_order_quantity = max_short_position - self.position
+            max_short_order_quantity = max_short_position - self.bt.position
             
             # define order quantity relative to max long order and max short order
             if action > 0:
@@ -165,17 +173,10 @@ class TradingEnv(gym.Env):
         self.bt.execute_order(order_quantity=order_quantity)
 
         # set trader state
-        self.trader_state = np.array([
-            self.bt.cash,
-            self.bt.position,
-            self.bt.position_value,
-            self.bt.portfolio_value,
-            # self.leverage,
-            # self.portfolio_volatility,
-        ])
+        self.trader_state = self.bt.trader_state
         
         # set reward function
-        reward = self.position * (
+        reward = self.bt.position * (
             (self.bt.close[self.current_step + 1] - self.bt.close[self.current_step]) 
         )
         self.current_step = self.bt.current_step
