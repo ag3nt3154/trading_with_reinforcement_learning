@@ -112,7 +112,7 @@ class DQNagent(object):
 
         # Compute the Q-values for the current state-action pairs using the DQN network
         current_q_values = self.dqn(states).gather(1, actions)
-        # print(f'current_q_values: {current_q_values.shape}')
+        print(f'current_q_values: {current_q_values.shape}')
         target_actions = self.target_dqn(next_states)
         # print(f'target_actions: {target_actions.shape}')
 
@@ -122,15 +122,18 @@ class DQNagent(object):
         # Take the maximum value along the last dimension (which has size 9)
         # next_q_values, _ = target_actions_reshaped.max(dim=-1)
         next_q_values, _ = target_actions.max(dim=-1)
-        # print(f'next_q_values: {next_q_values.shape}')
+        next_q_values = next_q_values.unsqueeze(1)
+        print(f'next_q_values: {next_q_values.shape}')
         
         # Compute the Q-values for the next states using the target network
         rewards = rewards.unsqueeze(1)
-        # print(f'rewards {rewards.shape}')
-
+        print(f'rewards {rewards.shape}')
+        print((self.gamma * next_q_values).shape)
         # rewards = torch.cat((rewards, rewards), dim=1)
         # Compute the expected Q-values using the Bellman equation
         expected_q_values = rewards + self.gamma * next_q_values
+        print(f'expected_q_values: {expected_q_values.shape}')
+
         
         # Compute the loss between the current Q-values and the expected Q-values
         loss = F.smooth_l1_loss(current_q_values, expected_q_values)
