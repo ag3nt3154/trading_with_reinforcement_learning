@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
-from utils.misc import get_attr
+from utils.misc import get_attr, get_next_n_elements
 from simple_backtester import backTester
 
 
@@ -177,7 +177,8 @@ class TradingEnv(gym.Env):
         
         # set reward function
         reward = self.bt.position * (
-            (self.bt.close[self.current_step + 1] - self.bt.close[self.current_step]) 
+            (self.bt.close[self.current_step] - self.bt.open[self.current_step]) \
+            + self.hindsight_weight * max(get_next_n_elements(self.bt.close, self.current_step, self.lookforward_period))
         )
         self.current_step = self.bt.current_step
 

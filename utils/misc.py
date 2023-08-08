@@ -148,4 +148,8 @@ def generate_price_series_norm(mean, volatility, initial_price, num_days, levera
 
 
     return price_series, lev_price_series
-    
+
+
+def get_next_n_elements(arr, index, n):
+    end_index = min(index + n, len(arr))
+    return arr[index:end_index]
